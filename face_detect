@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+from __future__ import print_function
+from baxter_core_msgs.msg import(
+	CameraControl,
+	CameraSettings,
+)
+import numpy as np
+import roslib
+roslib.load_manifest('obi_package')
+import sys
+import rospy
+import cv2
+from std_msgs.msg import String
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
+import os.path
+import baxter_interface
+import errno
+
+
+
+
+class image_converter:
+
+	def __init__(self):
+
+		self.bridge = CvBridge() #ROS to OpenCV
+		self.image_sub = rospy.Subscriber("/cameras/right_hand_camera/image",Image,self.callback)
+		self.head = baxter_interface.Head()
+		#self.cam_control = baxter_interface.CameraController()
+		self.right_limb = baxter_interface.Limb("right")
+		
+	def set_right_arm(self):
+		#right hand camera will move itself to my work station and look at me 
+		right_angles = dict({'right_s0': -1.443092426203203, 'right_s1': -0.15684953556128356,
+			 			'right_w0': -1.4806749555063956, 'right_w1': -1.571179821991635,
+			 			'right_w2': 1.0289176134741413, 'right_e0': 0.12885438618237474, 
+			 			'right_e1': 0.7221214558970586})
+		self.right_limb.move_to_joint_positions(right_angles, timeout=15.0, threshold=0.008726646)
+			
+	def pan_head(self):
+		pan_angle = self.head.pan()
+		self.head.set_pan(-.6, speed=.1, timeout=5)
+		#for i in range(0,2):
+			#self.head.set_pan(-.5, speed=.05, timeout=5)
+			#time.sleep(2)
+			#self.head.set_pan(.5, speed=.05, timeout=5)
+			
+			#time.sleep(2)
+			#b = self.head.set_pan(.5, speed=.1, timeout=1)
+		#return a
+	
+	#def camera_adjust(self):
+	#	self.cam_control.exposure(100)
+
+
+	def callback(self,data):
+		try:
+			cv_image = self.bridge.imgmsg_to_cv2(data, 'bgr8')
+		except CvBridgeError as e:
+			print(e)
+		
+		face_cascade = cv2.CascadeClassifier('/home/oadubor/fury_ws/bax_local/src/obi_package/haarcascade_frontalface_default.xml')
+		eye_cascade = cv2.CascadeClassifier('/home/oadubor/fury_ws/bax_local/src/obi_package/haarcascade_eye.xml')
+		
+		img = cv_image
+		gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+		faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+		
+		for (x,y,w,h) in faces:
+			cv2.rectangle(img,(x,y),(x+w,y+h),(255,0,0),5)
+			roi_gray = gray[y:y+h, x:x+w]
+			roi_color = img[y:y+h, x:x+w]
+			eyes = eye_cascade.detectMultiScale(roi_gray)
+			for (ex,ey,ew,eh) in eyes:
+				cv2.rectangle(roi_color,(ex,ey),(ex+ew,ey+eh),(0,255,0),5)
+		
+		cv2.imshow("Img Window", img)
+		cv2.waitKey(1)
+		
+def main(args):
+	rospy.init_node("image_converter", anonymous=True)
+	ic = image_converter()
+	ic.pan_head()
+	ic.set_right_arm()
+	#ic.camera_adjust()
+	try:	
+		rospy.spin()
+	except KeyboardInterrupt:
+		print("Shutting down")
+	cv2.destroyAllWindows()
+
+if __name__ == '__main__':
+	main(sys.argv)
+
