@@ -194,6 +194,12 @@ class bartender(object):
 
 	#@run_once
 	def adjust_arm_x(self, Default_Position = True):
+		
+		"""
+		Where the magic happens. Takes in the x_pixel coordinate, calculates the pixel offset,
+		converts it to meters, and then calls IK instance
+		
+		"""
 
 		#1 pixel = 0.000264583 meters
 		#self.arm_default()
@@ -300,105 +306,13 @@ class bartender(object):
 
 				#print(x_corr)
 				#pose = [pose['position'].x + ,pose['position'].y,pose['position'].z]
-		"""
+		
 	
-	"""
+
 	def grab_object(self, proceed)
 		if(proceed == True):
 
 	"""
-
-
-	#@run_once
-	def callback_adjust(self, data, err=.05): #adjusts gripper to stay aligned with bottle 
-		try:
-			cv_image = self.bridge.imgmsg_to_cv2(data, 'bgr8')
-		except CvBridgeError as e:
-			print(e)
-		#time.sleep(1)
-
-		self.arm_default()
-
-
-		img = cv_image
-		
-		boundaries = [ 
-						 ([250, 250, 250], [255, 255, 255]) #white filter
-					]
-		for (lower, upper) in boundaries:
-			lower = np.array(lower, dtype = "uint8")
-			upper = np.array(upper, dtype = "uint8")
-
-		mask = cv2.inRange(img, lower, upper) #mask for only white color
-		blur = cv2.GaussianBlur(mask, (3, 3), 0) # blur the mask
-		output = cv2.bitwise_and(img, img, mask = blur) #apply mask to img
-		contours, hierarchy = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE) #find the contours
-
-		for i, c in enumerate(contours):
-			area = cv2.contourArea(c)
-			keep_running = True
-			print(area)
-			#print(area)
-			#print("Working")
-			"""
-			while(keep_running):
-				if(area > 3000):
-					#print(area)
-					M = cv2.moments(c)
-					cX = int(M["m10"]/M["m00"]) #horizontal axis 
-					cY = int(M["m01"]/M["m00"]) #vertical axis 
-					#print(cX)
-
-					cX_t = 401 #corresponds with y axis on baxter(left to right)
-					cY_t = 118 #corresponds with x axis 
-					#cX and cY should be around 401, 118
-					
-					cX_low = int(round((cX_t-err*cX_t)))
-					cX_hi = int(round((cX_t+err*cX_t)))
-					cY_low = int(round((cY_t-err*cY_t)))
-					cY_hi = int(round((cY_t+err*cY_t)))
-
-					cX_range = list(range(cX_low, cX_hi)) #381 to 420
-					cY_range = list(range(cY_low, cY_hi)) #106 to 129
-
-					#print(cX_range)
-					#print(cY_range)
-				
-					if(cX in cX_range): #and cY in cY_range): #and cY in cY_range):
-						print("ready for grab")
-						go_ahead = True
-						#self.grab_object(go_ahead)
-						keep_running = False
-						return
-
-					elif(cX < min(cX_range)): #if bottle too far to the left
-						#print(self.gripper_coord)
-						#print(self.adjust_arm_x(cX))
-						#print(self.right_limb.endpoint_pose())
-						self.adjust_arm_x(cX)
-						keep_running = False
-						return 
-
-					elif(cX > max(cX_range)): #if bottle too to the right 
-						self.adjust_arm_x(cX)
-						keep_running = False
-						return
-						#print("Done")
-						#print(self.gripper_coord) 
-						#new_pose = self.gripper_coord
-						#print(new_pose)
-						#return new_pose
-						#print(x)
-						#print("Fruit", self.gripper_coord)
-						#print("Done")
-				#elif(area < 3000):
-					#print(area)
-				#	print("No Object Found")
-				#	return
-			"""
-
-
-
 		
 	#@run_once
 	def IK_Solver(self, pose): 
