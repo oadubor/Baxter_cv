@@ -1,0 +1,535 @@
+#!/usr/bin/env python
+from __future__ import print_function
+import numpy as np
+import roslib
+roslib.load_manifest('obi_package')
+import sys
+import rospy
+import cv2
+from baxter_core_msgs.msg import DigitalIOState, EndpointState
+from std_msgs.msg import String, Header
+from sensor_msgs.msg import Image, Range 
+from cv_bridge import CvBridge, CvBridgeError
+import os.path
+import baxter_interface
+import errno
+import argparse
+import time
+import struct
+import math
+from geometry_msgs.msg import (
+	PoseStamped,
+	Pose,
+	Point,
+	Quaternion,
+)
+from baxter_core_msgs.srv import (
+	SolvePositionIK,
+	SolvePositionIKRequest,
+)
+
+
+class bartender(object):
+
+	#gripper_coord = {}
+
+	def __init__(self):
+
+		self.bridge = CvBridge() #ROS to OpenCV
+		self.gripper = baxter_interface.Gripper("right")
+		self.right_limb = baxter_interface.Limb("right")
+		self.right_ir_sensor = rospy.Subscriber("/robot/range/right_hand_range/state/",Range,self.callback_IR,callback_args="right")
+		
+		self.right_cam_contour = rospy.Subscriber("/cameras/right_hand_camera/image", Image, self.callback_contour)
+		#self.right_cam_search = rospy.Subscriber("/cameras/right_hand_camera/image", Image, self.callback_adjust)
+		
+		self.RightCircle_cuff_button = rospy.Subscriber("/robot/digital_io/right_lower_button/state", DigitalIOState, self.callback_cuff_circle, callback_args="right")
+		self.RightThin_cuff_button = rospy.Subscriber("/robot/digital_io/right_upper_button/state", DigitalIOState, self.callback_cuff_thin, callback_args="right")
+		self.close_io = baxter_interface.DigitalIO('right_upper_button')  # 'dash' btn
+		self.open_io = baxter_interface.DigitalIO('right_lower_button')   # 'circle' btn
+
+		self.gripper_coord = {}
+		self.x_pixel = None
+		
+	def run_once(f):
+		def wrapper(*args, **kwargs):
+			if not wrapper.has_run:
+				wrapper.has_run = True
+				return f(*args, **kwargs)
+		wrapper.has_run = False
+		return wrapper 	
+
+
+
+	#@run_once
+	def arm_default(self):
+		#print(self.right_limb.joint_angles())
+		#print(self.right_limb.endpoint_pose())
+
+		right_angles = dict({'right_s0': -0.2665291618950906,
+							 'right_s1': 0.95490304045867, 
+							 'right_w0': 1.7886215986743925, 
+							 'right_w1': 0.8747525442916572, 
+							 'right_w2': 2.1893740795094567, 
+							 'right_e0': 1.0239321759135136, 
+							 'right_e1': 1.3825001850817291})
+
+		test_angles = dict({'right_s0': -0.18340859521677094, 
+							 'right_s1': 0.947, 
+							 'right_w0': 1.8447150721590972, 
+							 'right_w1': 0.9282238933253583, 
+							 'right_w2': 2.1624838328871863, 
+							 'right_e0': 1.0417103323718562, 
+							 'right_e1': 1.3755881293961718})
+		
+		self.right_limb.move_to_joint_positions(right_angles, timeout=15.0, threshold=0.003726646)
+		#time.sleep(5)
+		#print(self.right_limb.joint_angles())
+		#time.sleep(1)
+		print("Default Position")
+		return True
+		 
+	
+	def calibrate_gripper(self):
+
+		#print(self.right_limb.endpoint_pose())
+
+
+		self.gripper.calibrate(block=True, timeout=2.0)
+		grip = self.gripper.position()
+		#print(grip)
+
+		if(grip == 100.0):
+			time.sleep(2)
+			#print("Gripper is Open")
+		elif(grip == 0.0):
+			time.sleep(2)
+			print("Gripper is Closed")
+			self.gripper.command_position(position=100.0, block =False, timeout=5.0)
+			print("Gripper is now Open")
+
+
+		#print(self.right_limb.endpoint_pose())
+	
+	def callback_cuff_circle(self, msg, side): #closes gripper
+		side == "right"
+		#0 equals not pressed, 1 equals pressed
+		if(msg.state == 1):
+			self.gripper.command_position(position=0.0, block =True, timeout=5.0)
+		#print(self.gripper.position())
+	
+	def callback_cuff_thin(self, msg, side): #opens gripper
+		side == "right"
+		#0 equals not pressed, 1 equals pressed
+		if(msg.state == 1):
+			self.gripper.command_position(position=100.0, block =True, timeout=5.0)
+		#print(self.gripper.position())
+	
+	def callback_IR(self, msg, side): #IR Range 
+		side == "right"
+		#print(msg.range)
+		grip = self.gripper.position()
+		if(msg.range < 0.080 and msg.range > 0.055): #acceptable range for gripper to close 
+			self.gripper.command_position(position=0.0, block=False, timeout=2.0)
+			time.sleep(4) #prevents this instance from fighting with open gripper command 
+		#else:
+		#	print("Object not in range")
+	
+	def callback_contour(self, data):
+		try:
+			cv_image = self.bridge.imgmsg_to_cv2(data, 'bgr8')
+		except CvBridgeError as e:
+			print(e)
+
+		img = cv_image
+		
+		boundaries = [ 
+						#([17, 15, 100], [50, 56, 200]), #red filter
+						 #([72, 29, 15], [200, 123,57]), #blue filter
+						 ([250, 250, 250], [255, 255, 255]) #white filter
+					]
+		for (lower, upper) in boundaries:
+
+			lower = np.array(lower, dtype = "uint8")
+			upper = np.array(upper, dtype = "uint8")
+		
+
+		mask = cv2.inRange(img, lower, upper) #mask for only blue color
+		blur = cv2.GaussianBlur(mask, (3, 3), 0) # blur the mask
+		output = cv2.bitwise_and(img, img, mask = blur) #apply mask to img
+		contours, hierarchy = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE) #find the contours
+		
+		for i, c in enumerate(contours):
+			area = cv2.contourArea(c)
+			M = cv2.moments(c)
+			
+			if(area > 3000):
+				#print(area)
+				M = cv2.moments(c)
+				cX = int(M["m10"]/M["m00"])
+				cY = int(M["m01"]/M["m00"])
+
+				self.x_pixel = cX
+				#print(cX)
+
+				cv2.drawContours(img,contours,i,(0,0,255),3)#draw contour and circle on center of image 
+				#cv2.circle(img, (cX, cY), 20, (0, 0, 0), 2) # draw black circle
+				#center_circle = cv2.circle(img, (cX, cY), 20, (0, 0, 0), 1) #center circle on image 
+				#cv2.putText(img, "Center", (cX - 20, cY - 20), #put text on circle 
+				#	cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+				
+				#print(cX, cY) #pixel coordinates of the center of the countour(within drawn circle)
+				#optimal pixel coordinate: 382, 13(1-4) in 640x400 image
+				
+
+		
+		cv2.imshow("Color Detection", np.hstack([img, output]))
+		cv2.waitKey(1)
+	"""
+	def get_x_pixel(self):
+		time.sleep(1)
+		x_coord = self.x_pixel
+		return x_coord
+	"""
+
+	#@run_once
+	def adjust_arm_x(self, Default_Position = True):
+
+		#1 pixel = 0.000264583 meters
+		#self.arm_default()
+		#pix = 0.0002645833
+		err = .03
+		pix = 0.0005
+
+		#print(self.right_limb.endpoint_pose())
+		#x_pixel =cX from callback_adjust
+		#pose = self.right_limb.endpoint_pose()
+		#print(pose)
+		#time.sleep(1)
+		x_pixel = self.x_pixel
+		print(x_pixel)
+		pose = {
+				'position': Point(x=0.8506898881224833, y=-0.16353667322610682, z=-0.1074531155623482), 
+				'orientation': Quaternion(x=-0.012120916719333526, y=0.7213870385349382, z=0.041780141137052855, w=0.6911644115680742)
+				}
+		
+		#print(pose)
+		cX_t = 401
+		corr = abs(x_pixel - cX_t) #pixel offset
+		dist = corr*pix #pixel to meter conversion 
+		#return pose 
+		print(corr, dist)
+
+
+		cX_low = int(round((cX_t-err*cX_t)))
+		cX_hi = int(round((cX_t+err*cX_t)))
+		#cY_low = int(round((cY_t-err*cY_t)))
+		#cY_hi = int(round((cY_t+err*cY_t)))
+
+		cX_range = list(range(cX_low, cX_hi)) 
+		#cY_range = list(range(cY_low, cY_hi)) #106 to 129
+		#print(cX_range)
+					#print(cX_range)
+					#print(cY_range)
+				
+		if(x_pixel in cX_range): #and cY in cY_range): #and cY in cY_range):
+			print("ready for grab")
+			return
+
+		elif(x_pixel < min(cX_range)): #if bottle too far to the left
+			for position in pose:
+				pose['position'].y = pose['position'].y + dist
+				break
+			print("Moving to the left...")
+			self.IK_Solver(pose)
+			x_pixel = self.x_pixel
+			return
+			#if(x_pixel in cX_range):
+			#	print("ready for grab")
+			#if(x_pixel not in cX_range):
+				#for i in range (0, 2):
+				#	print("Whoops, trying again...")
+				#	self.adjust_arm_x()
+				#	break
+				#return
+				#self.IK_Solver(pose)
+				
+			#elif(x_pixel in cX_range):
+			#	print("ready for grab")
+			#	return 
+
+		elif(x_pixel > max(cX_range)): #if bottle too to the right 
+			for position in pose:
+				pose['position'].y = pose['position'].y - dist
+				break
+			print("Moving to the right...")
+			self.IK_Solver(pose)
+			return
+			#if(x_pixel in cX_range):
+			#	print("ready for grab")
+			"""
+			for i in range (0, 2):
+				if(x_pixel not in cX_range):
+					print("Whoops, trying again...")
+					x_pixel = self.x_pixel
+					print(x_pixel)
+					#run_once(self.adjust_arm_x())
+					self.adjust_arm_x()
+					return
+				elif(x_pixel in cX_range):
+					print("ready for grab")
+			return 
+			"""
+		"""	
+		if(x_pixel < 401):
+			for position in pose: 
+				pose['position'].y = pose['position'].y + dist
+				print(pose)
+				#print("apple")
+				#return pose
+				#print(pose)
+				self.IK_Solver(pose)
+				#print("apple")
+				return
+		elif(x_pixel > 401):
+			for position in pose:
+				pose['position'].y = pose['position'].y - dist
+				print(pose)
+				self.IK_Solver(pose)
+				return
+
+				#print(x_corr)
+				#pose = [pose['position'].x + ,pose['position'].y,pose['position'].z]
+		"""
+	
+	"""
+	def grab_object(self, proceed)
+		if(proceed == True):
+
+	"""
+
+
+	#@run_once
+	def callback_adjust(self, data, err=.05): #adjusts gripper to stay aligned with bottle 
+		try:
+			cv_image = self.bridge.imgmsg_to_cv2(data, 'bgr8')
+		except CvBridgeError as e:
+			print(e)
+		#time.sleep(1)
+
+		self.arm_default()
+
+
+		img = cv_image
+		
+		boundaries = [ 
+						 ([250, 250, 250], [255, 255, 255]) #white filter
+					]
+		for (lower, upper) in boundaries:
+			lower = np.array(lower, dtype = "uint8")
+			upper = np.array(upper, dtype = "uint8")
+
+		mask = cv2.inRange(img, lower, upper) #mask for only white color
+		blur = cv2.GaussianBlur(mask, (3, 3), 0) # blur the mask
+		output = cv2.bitwise_and(img, img, mask = blur) #apply mask to img
+		contours, hierarchy = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE) #find the contours
+
+		for i, c in enumerate(contours):
+			area = cv2.contourArea(c)
+			keep_running = True
+			print(area)
+			#print(area)
+			#print("Working")
+			"""
+			while(keep_running):
+				if(area > 3000):
+					#print(area)
+					M = cv2.moments(c)
+					cX = int(M["m10"]/M["m00"]) #horizontal axis 
+					cY = int(M["m01"]/M["m00"]) #vertical axis 
+					#print(cX)
+
+					cX_t = 401 #corresponds with y axis on baxter(left to right)
+					cY_t = 118 #corresponds with x axis 
+					#cX and cY should be around 401, 118
+					
+					cX_low = int(round((cX_t-err*cX_t)))
+					cX_hi = int(round((cX_t+err*cX_t)))
+					cY_low = int(round((cY_t-err*cY_t)))
+					cY_hi = int(round((cY_t+err*cY_t)))
+
+					cX_range = list(range(cX_low, cX_hi)) #381 to 420
+					cY_range = list(range(cY_low, cY_hi)) #106 to 129
+
+					#print(cX_range)
+					#print(cY_range)
+				
+					if(cX in cX_range): #and cY in cY_range): #and cY in cY_range):
+						print("ready for grab")
+						go_ahead = True
+						#self.grab_object(go_ahead)
+						keep_running = False
+						return
+
+					elif(cX < min(cX_range)): #if bottle too far to the left
+						#print(self.gripper_coord)
+						#print(self.adjust_arm_x(cX))
+						#print(self.right_limb.endpoint_pose())
+						self.adjust_arm_x(cX)
+						keep_running = False
+						return 
+
+					elif(cX > max(cX_range)): #if bottle too to the right 
+						self.adjust_arm_x(cX)
+						keep_running = False
+						return
+						#print("Done")
+						#print(self.gripper_coord) 
+						#new_pose = self.gripper_coord
+						#print(new_pose)
+						#return new_pose
+						#print(x)
+						#print("Fruit", self.gripper_coord)
+						#print("Done")
+				#elif(area < 3000):
+					#print(area)
+				#	print("No Object Found")
+				#	return
+			"""
+
+
+
+		
+	#@run_once
+	def IK_Solver(self, pose): 
+		#time.sleep(1)
+		#pose = self.gripper_coord
+		#self.arm_default()
+		#time.sleep(1)
+
+		#print("IK_Solver received\n", pose)
+		limb = "right"
+		pos = [pose['position'].x,pose['position'].y,pose['position'].z]
+		quat = [pose['orientation'].x,pose['orientation'].y,pose['orientation'].z,pose['orientation'].w]
+		#print(pose)
+
+
+ 		#rospy.init_node("rsdk_ik_service_client")
+		ns = "ExternalTools/" + limb + "/PositionKinematicsNode/IKService"
+		iksvc = rospy.ServiceProxy(ns, SolvePositionIK)
+		ikreq = SolvePositionIKRequest()
+		hdr = Header(stamp=rospy.Time.now(), frame_id='base')
+		poses = {
+			'left': PoseStamped(
+				header=hdr,
+				pose=Pose(
+					position=Point(
+						x=0.8852892081704834,
+						y=-0.20316133805322817,
+						z=-0.05269369275799425,
+					),
+					orientation=Quaternion(
+						x=0.05165907097162402,
+						y=0.6985363178292839,
+						z=0.03428887995305021,
+						w=0.7128833184830599,
+					),
+				),
+			),
+			'right': PoseStamped(
+				header=hdr,
+				pose=Pose(
+					position=Point(
+						x=pos[0],
+						y=pos[1],
+						z=pos[2],
+					),
+					orientation=Quaternion(
+						x=quat[0],
+						y=quat[1],
+						z=quat[2],
+						w=quat[3],
+					),
+				),
+			),
+		}
+
+		ikreq.pose_stamp.append(poses[limb])
+		try:
+			rospy.wait_for_service(ns, 5.0)
+			resp = iksvc(ikreq)
+		except (rospy.ServiceException, rospy.ROSException), e:
+			rospy.logerr("Service call failed: %s" % (e,))
+			return 1
+
+		# Check if result valid, and type of seed ultimately used to get solution
+		# convert rospy's string representation of uint8[]'s to int's
+		resp_seeds = struct.unpack('<%dB' % len(resp.result_type),
+								   resp.result_type)
+		if (resp_seeds[0] != resp.RESULT_INVALID):
+			seed_str = {
+						ikreq.SEED_USER: 'User Provided Seed',
+						ikreq.SEED_CURRENT: 'Current Joint Angles',
+						ikreq.SEED_NS_MAP: 'Nullspace Setpoints',
+					   }.get(resp_seeds[0], 'None')
+			#print("SUCCESS - Valid Joint Solution Found from Seed Type: %s" %
+			#	  (seed_str,))
+			# Format solution into Limb API-compatible dictionary
+			limb_joints = dict(zip(resp.joints[0].name, resp.joints[0].position))
+			# reformat the solution arrays into a dictionary
+			joint_solution = dict(zip(resp.joints[0].name, resp.joints[0].position))
+			#print(joint_solution)
+
+			#print("Working...")
+			#print("Original Position:\n", self.right_limb.endpoint_pose())
+
+			self.right_limb.move_to_joint_positions(joint_solution, timeout=15.0, threshold=0.003726646)
+			move = self.right_limb.move_to_joint_positions(joint_solution, timeout=15.0, threshold=0.003726646)
+			endpoint = self.right_limb.endpoint_pose()
+			#time.sleep(1.5)
+			
+			"""
+			for i in range(0,3):
+				if(joint_solution != self.right_limb.joint_angles()):
+					#print(endpoint)
+					print("Fixing...")
+					self.right_limb.move_to_joint_positions(joint_solution, timeout=15.0, threshold=0.003726646)
+					time.sleep(1)
+					#return
+			"""
+
+			
+			print("IK_Solver Done")
+			#print(self.x_pixel)
+
+			#print("New position:\n", self.right_limb.endpoint_pose())
+			#print "\nIK Joint Solution:\n", limb_joints
+			#print "------------------"
+			#print "Response Message:\n", resp
+		else:
+			print("INVALID POSE - No Valid Joint Solution Found.")
+
+		#return self.x_pixel
+		return 0
+
+
+
+
+
+def main(args):
+	rospy.init_node("bartender", anonymous=True)
+	bar = bartender()
+	bar.arm_default()
+	bar.adjust_arm_x(bar.arm_default)
+	#bar.calibrate_gripper()
+	#print(bar.gripper_coord)
+	#bar.IK_Solver()
+	try:	
+		rospy.spin()
+	except KeyboardInterrupt:
+		print("Shutting down")
+	cv2.destroyAllWindows()
+
+if __name__ == '__main__':
+	main(sys.argv)
+
