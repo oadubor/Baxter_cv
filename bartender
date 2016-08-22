@@ -31,7 +31,7 @@ from baxter_core_msgs.srv import (
 
 class bartender(object):
 
-	#gripper_coord = {}
+	
 
 	def __init__(self):
 
@@ -50,6 +50,11 @@ class bartender(object):
 
 		self.gripper_coord = {}
 		self.x_pixel = None
+		self.cX_range = None
+		self.pose = {
+					'position': Point(x=0.8506898881224833, y=-0.16353667322610682, z=-0.1074531155623482), 
+					'orientation': Quaternion(x=-0.012120916719333526, y=0.7213870385349382, z=0.041780141137052855, w=0.6911644115680742)
+					}
 		
 	def run_once(f):
 		def wrapper(*args, **kwargs):
@@ -193,7 +198,7 @@ class bartender(object):
 	"""
 
 	#@run_once
-	def adjust_arm_x(self, Default_Position = True):
+	def adjust_arm(self, Default_Position):
 		
 		"""
 		Where the magic happens. Takes in the x_pixel coordinate, calculates the pixel offset,
@@ -204,115 +209,90 @@ class bartender(object):
 		#1 pixel = 0.000264583 meters
 		#self.arm_default()
 		#pix = 0.0002645833
-		err = .03
-		pix = 0.0005
-
+		Default_Position = self.arm_default
+		err = .03 #3% variance in acceptable x pixel range 
+		pix = 0.0005 #pixel to meter conversion 
+		x_pixel = self.x_pixel
+		cX_t = 401
 		#print(self.right_limb.endpoint_pose())
 		#x_pixel =cX from callback_adjust
 		#pose = self.right_limb.endpoint_pose()
 		#print(pose)
 		#time.sleep(1)
-		x_pixel = self.x_pixel
+		
 		print(x_pixel)
-		pose = {
-				'position': Point(x=0.8506898881224833, y=-0.16353667322610682, z=-0.1074531155623482), 
-				'orientation': Quaternion(x=-0.012120916719333526, y=0.7213870385349382, z=0.041780141137052855, w=0.6911644115680742)
-				}
+		pose = self.pose
 		
 		#print(pose)
-		cX_t = 401
-		corr = abs(x_pixel - cX_t) #pixel offset
-		dist = corr*pix #pixel to meter conversion 
-		#return pose 
-		print(corr, dist)
+		if(Default_Position = True):
+			corr = abs(x_pixel - cX_t) #pixel offset
+			dist = corr*pix #pixel to meter conversion 
+			#return pose 
+			print(corr, dist)
 
 
-		cX_low = int(round((cX_t-err*cX_t)))
-		cX_hi = int(round((cX_t+err*cX_t)))
-		#cY_low = int(round((cY_t-err*cY_t)))
-		#cY_hi = int(round((cY_t+err*cY_t)))
+			cX_low = int(round((cX_t-err*cX_t)))#creates lowest acceptable pixel val
+			cX_hi = int(round((cX_t+err*cX_t)))#creates highest acceptable pixel val
+			#cY_low = int(round((cY_t-err*cY_t)))
+			#cY_hi = int(round((cY_t+err*cY_t)))
 
-		cX_range = list(range(cX_low, cX_hi)) 
-		#cY_range = list(range(cY_low, cY_hi)) #106 to 129
-		#print(cX_range)
-					#print(cX_range)
-					#print(cY_range)
+			cX_range = list(range(cX_low, cX_hi)) 
+			self.cX_range = cX_range
+			#cY_range = list(range(cY_low, cY_hi)) #106 to 129
+			#print(cX_range)
+			#print(cX_range)
+			#print(cY_range)
 				
-		if(x_pixel in cX_range): #and cY in cY_range): #and cY in cY_range):
-			print("ready for grab")
-			return
+			if(x_pixel in cX_range): 
+				print("ready for grab")
+				return 1
 
-		elif(x_pixel < min(cX_range)): #if bottle too far to the left
-			for position in pose:
-				pose['position'].y = pose['position'].y + dist
-				break
-			print("Moving to the left...")
-			self.IK_Solver(pose)
-			x_pixel = self.x_pixel
-			return
-			#if(x_pixel in cX_range):
-			#	print("ready for grab")
-			#if(x_pixel not in cX_range):
-				#for i in range (0, 2):
-				#	print("Whoops, trying again...")
-				#	self.adjust_arm_x()
-				#	break
-				#return
-				#self.IK_Solver(pose)
+			elif(x_pixel < min(cX_range)): #if bottle too far to the left
+				for position in pose:
+					pose['position'].y = pose['position'].y + dist
+					break
+				print("Moving to the left...")
+				self.IK_Solver(pose)
+				x_pixel = self.x_pixel
+				return 1
+				#if(x_pixel in cX_range):
+				#	print("ready for grab")
+				#if(x_pixel not in cX_range):
+					#for i in range (0, 2):
+					#	print("Whoops, trying again...")
+					#	self.adjust_arm_x()
+					#	break
+					#return
+					#self.IK_Solver(pose)
+					
+				#elif(x_pixel in cX_range):
+				#	print("ready for grab")
+				#	return 
+
+			elif(x_pixel > max(cX_range)): #if bottle too to the right 
+				for position in pose:
+					pose['position'].y = pose['position'].y - dist
+					break
+				print("Moving to the right...")
+				self.IK_Solver(pose)
+				return 1
+				#if(x_pixel in cX_range):
+				#	print("ready for grab")
 				
-			#elif(x_pixel in cX_range):
-			#	print("ready for grab")
-			#	return 
-
-		elif(x_pixel > max(cX_range)): #if bottle too to the right 
-			for position in pose:
-				pose['position'].y = pose['position'].y - dist
-				break
-			print("Moving to the right...")
-			self.IK_Solver(pose)
-			return
-			#if(x_pixel in cX_range):
-			#	print("ready for grab")
-			"""
-			for i in range (0, 2):
-				if(x_pixel not in cX_range):
-					print("Whoops, trying again...")
-					x_pixel = self.x_pixel
-					print(x_pixel)
-					#run_once(self.adjust_arm_x())
-					self.adjust_arm_x()
-					return
-				elif(x_pixel in cX_range):
-					print("ready for grab")
-			return 
-			"""
-		"""	
-		if(x_pixel < 401):
-			for position in pose: 
-				pose['position'].y = pose['position'].y + dist
-				print(pose)
-				#print("apple")
-				#return pose
-				#print(pose)
-				self.IK_Solver(pose)
-				#print("apple")
-				return
-		elif(x_pixel > 401):
-			for position in pose:
-				pose['position'].y = pose['position'].y - dist
-				print(pose)
-				self.IK_Solver(pose)
-				return
-
-				#print(x_corr)
-				#pose = [pose['position'].x + ,pose['position'].y,pose['position'].z]
-		
-	
-
-	def grab_object(self, proceed)
-		if(proceed == True):
-
+		#def grab_object(self, proceed)
+		#	if(proceed == True):
 	"""
+	def adjust_arm_check(self, x_pixel):
+
+		x_pixel = self.x_pixel 
+		cX_range = self.cX_range
+		pose = self.right_limb.endpoint_pose
+
+		if(x_pixel not in cX_range):
+			self.adjust_arm
+	"""
+
+	
 		
 	#@run_once
 	def IK_Solver(self, pose): 
@@ -398,8 +378,8 @@ class bartender(object):
 			#print("Original Position:\n", self.right_limb.endpoint_pose())
 
 			self.right_limb.move_to_joint_positions(joint_solution, timeout=15.0, threshold=0.003726646)
-			move = self.right_limb.move_to_joint_positions(joint_solution, timeout=15.0, threshold=0.003726646)
-			endpoint = self.right_limb.endpoint_pose()
+			#move = self.right_limb.move_to_joint_positions(joint_solution, timeout=15.0, threshold=0.003726646)
+			#endpoint = self.right_limb.endpoint_pose()
 			#time.sleep(1.5)
 			
 			"""
@@ -434,7 +414,7 @@ def main(args):
 	rospy.init_node("bartender", anonymous=True)
 	bar = bartender()
 	bar.arm_default()
-	bar.adjust_arm_x(bar.arm_default)
+	bar.adjust_arm(bar.arm_default)
 	#bar.calibrate_gripper()
 	#print(bar.gripper_coord)
 	#bar.IK_Solver()
