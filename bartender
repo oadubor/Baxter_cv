@@ -290,6 +290,7 @@ class bartender(object):
 
 		if(x_pixel not in cX_range):
 			self.adjust_arm
+			test
 	"""
 
 	
