@@ -55,6 +55,13 @@ class bartender(object):
 					'position': Point(x=0.8506898881224833, y=-0.16353667322610682, z=-0.1074531155623482), 
 					'orientation': Quaternion(x=-0.012120916719333526, y=0.7213870385349382, z=0.041780141137052855, w=0.6911644115680742)
 					}
+		self.check_repeat = None
+		self.gripper_aligned = None
+		self.contour_area = None
+		self.gripper_IR_unlock = None
+		self.gripper_closed = None
+		self.grip_success = None
+		self.bottle_poured = None
 		
 	def run_once(f):
 		def wrapper(*args, **kwargs):
@@ -66,7 +73,7 @@ class bartender(object):
 
 
 
-	#@run_once
+	
 	def arm_default(self):
 		#print(self.right_limb.joint_angles())
 		#print(self.right_limb.endpoint_pose())
@@ -131,14 +138,18 @@ class bartender(object):
 		#print(self.gripper.position())
 	
 	def callback_IR(self, msg, side): #IR Range 
-		side == "right"
-		#print(msg.range)
-		grip = self.gripper.position()
-		if(msg.range < 0.080 and msg.range > 0.055): #acceptable range for gripper to close 
-			self.gripper.command_position(position=0.0, block=False, timeout=2.0)
-			time.sleep(4) #prevents this instance from fighting with open gripper command 
-		#else:
-		#	print("Object not in range")
+		if(self.gripper_IR_unlock == True):
+			side == "right"
+			#print(msg.range)
+			grip = self.gripper.position()
+			if(msg.range < 0.080 and msg.range > 0.055): #acceptable range for gripper to close 
+				self.gripper.command_position(position=0.0, block=False, timeout=2.0)
+				print("Gripper Closed")
+				self.gripper_closed = True
+				self.grip_success = self.gripper.position()
+				time.sleep(4) #prevents this instance from fighting with open gripper command 
+			#else:
+			#	print("Object not in range")
 	
 	def callback_contour(self, data):
 		try:
@@ -175,9 +186,10 @@ class bartender(object):
 				cY = int(M["m01"]/M["m00"])
 
 				self.x_pixel = cX
+				area = self.contour_area
 				#print(cX)
 
-				cv2.drawContours(img,contours,i,(0,0,255),3)#draw contour and circle on center of image 
+				#cv2.drawContours(img,contours,i,(0,0,255),3)#draw contour and circle on center of image 
 				#cv2.circle(img, (cX, cY), 20, (0, 0, 0), 2) # draw black circle
 				#center_circle = cv2.circle(img, (cX, cY), 20, (0, 0, 0), 1) #center circle on image 
 				#cv2.putText(img, "Center", (cX - 20, cY - 20), #put text on circle 
@@ -197,7 +209,7 @@ class bartender(object):
 		return x_coord
 	"""
 
-	#@run_once
+
 	def adjust_arm(self, Default_Position):
 		
 		"""
@@ -224,7 +236,7 @@ class bartender(object):
 		pose = self.pose
 		
 		#print(pose)
-		if(Default_Position = True):
+		if(Default_Position == True):
 			corr = abs(x_pixel - cX_t) #pixel offset
 			dist = corr*pix #pixel to meter conversion 
 			#return pose 
@@ -245,6 +257,7 @@ class bartender(object):
 				
 			if(x_pixel in cX_range): 
 				print("ready for grab")
+				self.gripper_aligned = True
 				return 1
 
 			elif(x_pixel < min(cX_range)): #if bottle too far to the left
@@ -254,6 +267,7 @@ class bartender(object):
 				print("Moving to the left...")
 				self.IK_Solver(pose)
 				x_pixel = self.x_pixel
+				self.adjust_arm_check()
 				return 1
 				#if(x_pixel in cX_range):
 				#	print("ready for grab")
@@ -275,23 +289,117 @@ class bartender(object):
 					break
 				print("Moving to the right...")
 				self.IK_Solver(pose)
+				self.adjust_arm_check()
 				return 1
 				#if(x_pixel in cX_range):
 				#	print("ready for grab")
 				
-		#def grab_object(self, proceed)
-		#	if(proceed == True):
-	"""
-	def adjust_arm_check(self, x_pixel):
+		
+	
+	def adjust_arm_check(self):
+
+		"""
+		This function checks whether adjust_arm worked. If not it runs it again once
+		"""
 
 		x_pixel = self.x_pixel 
+		check = self.check_repeat
 		cX_range = self.cX_range
 		pose = self.right_limb.endpoint_pose
 
-		if(x_pixel not in cX_range):
-			self.adjust_arm
-			test
-	"""
+		if(check == None):
+			pritn("Checking arm for propper correction...")
+			if(x_pixel not in cX_range):
+				self.adjust_arm_x(self.arm_default)
+				check = 1
+				return
+
+		elif(check != None):
+			print("Arm already checked for correction. Avoiding infinite loop")
+			return
+
+	def grab_object(self):
+		proceed = self.gripper_aligned
+		if(proceed == True): #gripper only grabs object if the gripper is aligned (True)
+			pose = self.pose
+			area = self.contour_area
+
+			"""
+			Algorithm that relates contour area to distance from gripper to bottle
+			will go here
+			x_dist = 
+			"""
+
+			for position in pose:
+				pose['position'].x = pose['position'].x + x_dist
+				break
+			print("Moving to grab the bottle...")
+			self.IK_Solver(pose)
+			self.gripper_IR_unlock = True #allows IR instance to close gripper
+			grip_closed = self.gripper_closed
+			if(grip_closed == True):
+				grip_success = self.grip_success #state of gripper 
+				if(grip_success != 0): #ensures that the gripper didn't miss the bottle
+					print("I have grabbed the bottle")
+					print("I will now lift the bottle")
+					z_dist = .1 
+					for position in pose:
+						pose['position'].z = pose['position'].z + z_dist
+						break
+					self.IK_Solver(pose) #lift bottle 10 cm
+					pose = self.pose #updates self.pose for lifted bottle position
+					print("I have lifted the bottle")
+					return 1 #now pour_object instance has go ahead to pour 
+
+				elif(grip_success == 0):
+					print("I missed the bottle")
+					return 0
+
+	def pour_object(self, proceed):
+		"""
+		This function will pour the object using joint angles as opposed to IK
+		"""
+
+		proceed = self.grab_object()
+		if(proceed == 1):
+			right_angles = self.right_limb.joint_angles()
+			for right_w0 in right_angles:
+				right_angles['right_w0'] = right_angles['right_w0'] + (math.pi/2) #rotate the wrist 90 degrees
+				break
+			print("I will now pour the bottle")
+			time.sleep(5) #give me 5 seconds to abort pouring without eusing E-STOP
+			#find function in Baxter API that rotates wrist slowly to avoid
+			#erratic spilling. Also implement a timer or algorithm that knows when to stop pouring
+			#self.right_limb.
+			print("I have poured the bottle")
+			for right_w0 in right_angles:
+				right_angles['right_w0'] = right_angles['right_w0'] - (math.pi/2) #rotate the wrist 90 degrees
+				break
+			self.right_limb.set_joint_angles(right_angles) #rotate wrist to straigten bottle
+			print("Bottle corrected. Now ready to put bottle down")
+			self.bottle_poured = True
+			return
+
+
+	def return_object(self):
+		"""
+		This function will return the poured bottle to the table
+		"""
+		proceed = self.bottle_poured
+		if(proceed == True):
+			
+
+
+
+
+			
+
+
+
+
+
+
+	
 
 	
 		
